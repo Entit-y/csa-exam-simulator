@@ -21,7 +21,7 @@ The layout is intentionally typographic and task-led: one configuration panel on
 - A submit confirmation makes unanswered questions explicit before the irreversible action.
 - The question map reduces the need to remember which questions have been answered.
 - Keyboard shortcuts support efficient navigation, while visible controls remain available.
-- Answer options can be shuffled per session; displayed letters follow the shuffled position, and the two source-note items keep their PDF order so the notes stay accurate.
+- Answer options can be shuffled per session; displayed letters follow the shuffled position, and items carrying a source note keep their PDF order so the note's letters stay accurate.
 - Focus moves to the question heading on navigation, the submit dialog traps focus and restores it on close, and timer/answer changes are announced through a polite live region.
 - Long scenarios are stored as an explicit `scenario` + `ask` pair instead of being split by a runtime heuristic.
 - Text never drops below 11px, the muted label tier meets WCAG AA on every surface it is used on, and interactive targets are at least 44×44px on touch devices.
@@ -29,7 +29,7 @@ The layout is intentionally typographic and task-led: one configuration panel on
 
 ## Source integrity
 
-The question text, options, and supplied answer letters are represented in `src/data/questions.json`. Two source issues are surfaced in the app rather than being silently normalized: Q16's printed key conflicts with its explanation; Q77 has no printed answer and uses a labelled inference.
+The question text, options, and supplied answer letters are represented in `src/data/questions.json`. Notes on individual questions use one of four `answerStatus` values, each rendered with its own label in the review: `conflict` (the printed key contradicts its own explanation), `corrected` (a printed answer or option was repaired), `inferred` (the PDF prints no answer), and `ambiguous` (a second option is equally defensible). Q16, Q69, Q77, and the Q31/Q38/Q59/Q60/Q63 notes are the current examples.
 
 ## References consulted
 

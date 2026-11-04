@@ -53,12 +53,15 @@ The Vite config detects the GitHub repository name in Actions and sets the proje
 
 The question text and answer options are transcribed from the supplied PDF. Explanations are included only where the PDF provided one.
 
-Two source-key issues are made explicit in the results review:
+The supplied key has been verified against the PDF's own answer text and the question content. Corrections and remaining caveats are surfaced in the results review:
 
-- **Question 16:** the printed key says **D**, while the accompanying explanation describes lateral movement, which matches option **C**. The app scores against the printed letter D and flags the conflict.
-- **Question 77:** the PDF does not print an answer. The app uses **C** as an inference from the scenario and clearly labels it as unverified.
+- **Question 16:** the printed key says **D**, but the explanation and the described TTPs (admin shares, stolen domain credentials, scheduled tasks, remote execution) match **C**. The app scores **C** and flags the printed conflict.
+- **Question 69:** the printed key says **4618** ("a monitored security event pattern"), which has nothing to do with time. The app scores **C (4616, "the system time was changed")** and annotates the correction.
+- **Question 77:** the PDF does not print an answer. The app uses **C** as an inference from the scenario and labels it as unverified.
+- **Ambiguous items (Q31, Q38, Q59, Q60, Q63):** the keyed answer is retained, but each carries a source note naming the equally defensible alternative.
+- **Data repairs:** Q20's option D was transcribed from a different question and is corrected; Q80's option D duplicated the meaning of the keyed answer and was replaced; Q61's malformed `netstat` option was repaired and its stem aligned.
 
-These notes are intentionally surfaced rather than silently correcting the supplied material. Review them against your instructor's key.
+These notes are surfaced rather than silently normalized. Review them against your instructor's key.
 
 ## Project structure
 

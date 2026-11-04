@@ -30,7 +30,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const EXPECTED_COUNT = 80;
 const OPTIONS_SUFFIX = /\s*Options:\s*$/i;
-const VALID_ANSWER_STATUSES = new Set(["conflict", "inferred"]);
+const VALID_ANSWER_STATUSES = new Set(["conflict", "inferred", "corrected", "ambiguous"]);
 
 const problems = [];
 const fail = (message) => problems.push(message);
@@ -190,7 +190,7 @@ function validate(data) {
     const hasStatus = Object.prototype.hasOwnProperty.call(question, "answerStatus");
     if (hasStatus && !VALID_ANSWER_STATUSES.has(question.answerStatus)) {
       fail(
-        `${at}: "answerStatus" must be "conflict" or "inferred", got ${JSON.stringify(question.answerStatus)}`,
+        `${at}: "answerStatus" must be one of "conflict", "inferred", "corrected", "ambiguous", got ${JSON.stringify(question.answerStatus)}`,
       );
     }
     if (Object.prototype.hasOwnProperty.call(question, "sourceNote")) {

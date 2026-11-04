@@ -36,6 +36,21 @@ const LENGTHS = {
   sprint: { label: 'Quick sprint', count: 20, duration: 30, detail: '20 random questions · 30 min' },
 };
 
+// Source-key notes are labelled from a single place so the review item and the
+// session banner stay consistent as answerStatus values are added.
+const SOURCE_NOTE_STATUS = {
+  conflict: { label: 'SOURCE KEY CONFLICT', summary: 'printed answer conflicts with its explanation', warning: true },
+  corrected: { label: 'SOURCE ITEM CORRECTED', summary: 'printed answer or option corrected', warning: true },
+  inferred: { label: 'ANSWER KEY INFERRED', summary: 'answer key inferred because the PDF omits it', warning: false },
+  ambiguous: { label: 'ANSWER KEY AMBIGUITY', summary: 'answer depends on an undefined taxonomy or tool variant', warning: false },
+};
+
+const FALLBACK_SOURCE_NOTE = { label: 'ANSWER KEY NOTE', summary: 'source note', warning: false };
+
+function sourceNoteMeta(status) {
+  return SOURCE_NOTE_STATUS[status] ?? FALLBACK_SOURCE_NOTE;
+}
+
 const OPTION_COUNT = questionBank.reduce(
   (max, question) => Math.max(max, question.options?.length ?? 0),
   0,
@@ -897,6 +912,7 @@ function ReviewItem({ entry }) {
   const selectedEntry = displayed.find((item) => item.option.id === entry.selected) ?? null;
   const correctEntry = displayed.find((item) => item.option.id === entry.correct) ?? null;
   const statusLabel = entry.outcome === 'correct' ? 'Correct' : entry.outcome === 'unanswered' ? 'Not answered' : 'Incorrect';
+  const noteMeta = sourceNoteMeta(question.answerStatus);
 
   return (
     <details className={`review-item review-${entry.outcome}`}>
@@ -936,8 +952,8 @@ function ReviewItem({ entry }) {
           <p>{question.explanation || 'No explanation was included for this question in the supplied PDF.'}</p>
         </div>
         {question.sourceNote && (
-          <div className={`source-note ${question.answerStatus === 'conflict' ? 'source-note-warning' : ''}`}>
-            <strong>{question.answerStatus === 'conflict' ? 'SOURCE KEY CONFLICT' : 'ANSWER KEY NOTE'}</strong>
+          <div className={`source-note ${noteMeta.warning ? 'source-note-warning' : ''}`}>
+            <strong>{noteMeta.label}</strong>
             <p>{question.sourceNote}</p>
           </div>
         )}
@@ -1018,7 +1034,7 @@ function ResultsScreen({ result, onRetry, onHome, notice }) {
           {sourceNotes.length > 0 && (
             <div className="source-integrity-banner">
               <span className="source-warning-mark">!</span>
-              <div><strong>{sourceNotes.length} answer-key note{sourceNotes.length > 1 ? 's' : ''} in this session</strong><p>{sourceNotes.map((entry) => `Q${entry.id}: ${questionById.get(entry.id).answerStatus === 'conflict' ? 'printed answer conflicts with its explanation' : 'answer key inferred because the PDF omits it'}`).join(' · ')}. See the individual review notes before relying on these keys.</p></div>
+              <div><strong>{sourceNotes.length} source note{sourceNotes.length > 1 ? 's' : ''} in this session</strong><p>{sourceNotes.map((entry) => `Q${entry.id}: ${sourceNoteMeta(questionById.get(entry.id).answerStatus).summary}`).join(' · ')}. See the individual review notes before relying on these keys.</p></div>
             </div>
           )}
 
