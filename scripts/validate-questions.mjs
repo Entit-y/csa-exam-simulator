@@ -149,8 +149,8 @@ function validate(data) {
     }
 
     // explanation
-    if (typeof question.explanation !== "string") {
-      fail(`${at}: "explanation" must be a string (empty allowed)`);
+    if (typeof question.explanation !== "string" || question.explanation.trim() === "") {
+      fail(`${at}: "explanation" must be a non-empty string`);
     }
 
     // scenario / ask

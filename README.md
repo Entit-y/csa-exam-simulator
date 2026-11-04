@@ -51,7 +51,7 @@ The Vite config detects the GitHub repository name in Actions and sets the proje
 
 ## Exam data and answer-key notes
 
-The question text and answer options are transcribed from the supplied PDF. Explanations are included only where the PDF provided one.
+The question text and answer options are transcribed from the supplied PDF. Every question has an explanation: where the PDF supplied one it is retained, and the rest were written for this app. The build fails if any question is missing one.
 
 The supplied key has been verified against the PDF's own answer text and the question content. Corrections and remaining caveats are surfaced in the results review:
 
