@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "validate:questions": "node scripts/validate-questions.mjs",
+    "split:questions": "node scripts/split-prompts.mjs",
+    "prebuild": "node scripts/validate-questions.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.2.1",

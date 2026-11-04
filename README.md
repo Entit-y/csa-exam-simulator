@@ -6,11 +6,12 @@ A static React exam simulator built from the 80 questions in `CSA_prep_updated.p
 
 - Full 80-question exam, 40-question focus set, or 20-question sprint
 - Optional countdown and question shuffling
+- Optional answer-option shuffling with stable, per-session lettering
 - One-question-at-a-time interface with previous/next controls and a question map
 - Mark-for-review flags, keyboard shortcuts, and browser-local session recovery
 - Automatic scoring with incorrect and unanswered questions separated in the review
 - Answer comparisons and source explanations where the PDF supplied them
-- Responsive layout and reduced-motion support
+- Responsive layout, reduced-motion support, visible focus, and screen-reader announcements
 
 ## Run locally
 
@@ -31,6 +32,12 @@ npm run preview
 ```
 
 The generated static site is written to `dist/`.
+
+The build validates the question bank first (`npm run validate:questions`); run it on its own to check data edits:
+
+```bash
+npm run validate:questions
+```
 
 ## Deploy to GitHub Pages
 
@@ -57,10 +64,14 @@ These notes are intentionally surfaced rather than silently correcting the suppl
 
 ```text
 src/
-  data/questions.json    # 80-question bank and source-key metadata
+  data/questions.json    # 80-question bank, source-key metadata, scenario/ask split
+  lib/exam.js            # Option ordering, session/result validation helpers
   App.jsx                # Exam, setup, navigation, grading, and review UI
   styles.css             # Responsive design system and motion
   main.jsx               # React entry point
+scripts/
+  split-prompts.mjs      # Regenerates the scenario/ask fields (idempotent)
+  validate-questions.mjs # Question-bank integrity gate used by the build
 .github/workflows/
   deploy.yml              # GitHub Pages deployment pipeline
 ```

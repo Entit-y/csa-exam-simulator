@@ -21,6 +21,10 @@ The layout is intentionally typographic and task-led: one configuration panel on
 - A submit confirmation makes unanswered questions explicit before the irreversible action.
 - The question map reduces the need to remember which questions have been answered.
 - Keyboard shortcuts support efficient navigation, while visible controls remain available.
+- Answer options can be shuffled per session; displayed letters follow the shuffled position, and the two source-note items keep their PDF order so the notes stay accurate.
+- Focus moves to the question heading on navigation, the submit dialog traps focus and restores it on close, and timer/answer changes are announced through a polite live region.
+- Long scenarios are stored as an explicit `scenario` + `ask` pair instead of being split by a runtime heuristic.
+- Text never drops below 11px, the muted label tier meets WCAG AA on every surface it is used on, and interactive targets are at least 44×44px on touch devices.
 - The stylesheet respects `prefers-reduced-motion` and limits animation to short state transitions.
 
 ## Source integrity

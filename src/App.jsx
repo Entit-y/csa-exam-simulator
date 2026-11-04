@@ -1,16 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import questionBank from './data/questions.json';
+import {
+  buildOptionOrder,
+  displayOptions,
+  firstUnansweredIndex,
+  isValidResult,
+  isValidSession,
+  letterForOption,
+  resolveOptionOrder,
+  shuffle,
+} from './lib/exam.js';
 
-const SESSION_KEY = 'csa-exam-room:session:v1';
-const RESULT_KEY = 'csa-exam-room:result:v1';
-const SETTINGS_KEY = 'csa-exam-room:settings:v1';
+const SESSION_KEY = 'csa-exam-room:session:v2';
+const RESULT_KEY = 'csa-exam-room:result:v2';
+const SETTINGS_KEY = 'csa-exam-room:settings:v2';
+const LEGACY_KEYS = [
+  'csa-exam-room:session:v1',
+  'csa-exam-room:result:v1',
+  'csa-exam-room:settings:v1',
+];
 
 const questionById = new Map(questionBank.map((question) => [question.id, question]));
+const BANK_IDS = new Set(questionBank.map((question) => question.id));
 
 const DEFAULT_SETTINGS = {
   length: 'full',
   timed: true,
   shuffle: false,
+  shuffleAnswers: true,
 };
 
 const LENGTHS = {
@@ -19,30 +36,106 @@ const LENGTHS = {
   sprint: { label: 'Quick sprint', count: 20, duration: 30, detail: '20 random questions · 30 min' },
 };
 
-function readStorage(key) {
+const OPTION_COUNT = questionBank.reduce(
+  (max, question) => Math.max(max, question.options?.length ?? 0),
+  0,
+);
+
+function normalizeSettings(value) {
+  const merged = { ...DEFAULT_SETTINGS, ...(value && typeof value === 'object' ? value : {}) };
+  return {
+    length: LENGTHS[merged.length] ? merged.length : DEFAULT_SETTINGS.length,
+    timed: typeof merged.timed === 'boolean' ? merged.timed : DEFAULT_SETTINGS.timed,
+    shuffle: typeof merged.shuffle === 'boolean' ? merged.shuffle : DEFAULT_SETTINGS.shuffle,
+    shuffleAnswers: typeof merged.shuffleAnswers === 'boolean'
+      ? merged.shuffleAnswers
+      : DEFAULT_SETTINGS.shuffleAnswers,
+  };
+}
+
+function safeParse(raw) {
   try {
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
 }
 
-function writeStorage(key, value) {
+function legacyStorage() {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    return window.localStorage;
   } catch {
-    // The exam remains usable if browser storage is unavailable.
+    return null;
   }
 }
 
-function shuffleArray(items) {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
+/**
+ * Read and validate everything persisted from a previous visit. Invalid data is
+ * removed rather than handed to the app, which previously could crash a render.
+ */
+function loadBoot() {
+  const boot = {
+    settings: { ...DEFAULT_SETTINGS },
+    session: null,
+    result: null,
+    discarded: false,
+    unavailable: false,
+  };
+  const storage = legacyStorage();
+  if (!storage) {
+    boot.unavailable = true;
+    return boot;
   }
-  return copy;
+  try {
+    const probe = 'csa-exam-room:probe';
+    storage.setItem(probe, '1');
+    storage.removeItem(probe);
+  } catch {
+    boot.unavailable = true;
+    return boot;
+  }
+  for (const key of LEGACY_KEYS) {
+    try {
+      storage.removeItem(key);
+    } catch {
+      // Ignore: cleanup is best-effort.
+    }
+  }
+  try {
+    const rawSettings = storage.getItem(SETTINGS_KEY);
+    if (rawSettings) boot.settings = normalizeSettings(safeParse(rawSettings));
+  } catch {
+    boot.settings = { ...DEFAULT_SETTINGS };
+  }
+  try {
+    const rawSession = storage.getItem(SESSION_KEY);
+    if (rawSession) {
+      const parsed = safeParse(rawSession);
+      if (isValidSession(parsed, BANK_IDS)) {
+        boot.session = parsed;
+      } else {
+        boot.discarded = true;
+        storage.removeItem(SESSION_KEY);
+      }
+    }
+  } catch {
+    boot.discarded = true;
+  }
+  try {
+    const rawResult = storage.getItem(RESULT_KEY);
+    if (rawResult) {
+      const parsed = safeParse(rawResult);
+      if (isValidResult(parsed, BANK_IDS)) {
+        boot.result = parsed;
+      } else {
+        boot.discarded = true;
+        storage.removeItem(RESULT_KEY);
+      }
+    }
+  } catch {
+    boot.discarded = true;
+  }
+  return boot;
 }
 
 function formatTime(totalSeconds) {
@@ -62,7 +155,8 @@ function formatElapsed(totalSeconds) {
 }
 
 function buildResult(sourceSession) {
-  const entries = sourceSession.order.map((id) => {
+  const order = sourceSession.order.filter((id) => questionById.has(id));
+  const entries = order.map((id) => {
     const question = questionById.get(id);
     const selected = sourceSession.responses[id] ?? null;
     const outcome = selected === null ? 'unanswered' : selected === question.answer ? 'correct' : 'incorrect';
@@ -72,6 +166,7 @@ function buildResult(sourceSession) {
       correct: question.answer,
       outcome,
       flagged: Boolean(sourceSession.flagged?.[id]),
+      options: resolveOptionOrder(question, sourceSession.optionOrder?.[id]),
     };
   });
   const correct = entries.filter((entry) => entry.outcome === 'correct').length;
@@ -93,20 +188,55 @@ function buildResult(sourceSession) {
   };
 }
 
-function PromptText({ text }) {
-  const starts = [...text.matchAll(/\b(?:what|which|who|how|why|where|when)\b/gi)];
-  const candidate = starts.filter((match) => match.index > text.length * 0.42).at(-1);
-  if (candidate && text.trim().endsWith('?') && candidate.index > 90) {
-    const scenario = text.slice(0, candidate.index).trim();
-    const ask = text.slice(candidate.index).trim();
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+    this.resetSavedData = this.resetSavedData.bind(this);
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('CSA Exam Room crashed:', error, info);
+  }
+
+  resetSavedData() {
+    const storage = legacyStorage();
+    if (storage) {
+      for (const key of [SESSION_KEY, RESULT_KEY, SETTINGS_KEY]) {
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Ignore: reload may still recover.
+        }
+      }
+    }
+    window.location.reload();
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
     return (
-      <>
-        <p className="question-scenario">{scenario}</p>
-        <h1 id="question-heading" className="question-ask">{ask}</h1>
-      </>
+      <div className="page-shell">
+        <main className="results-main" id="main-content" tabIndex={-1}>
+          <section className="setup-panel" aria-labelledby="recovery-title">
+            <div className="setup-topline"><span>RECOVERY</span><span className="setup-ref">CSA / ERR</span></div>
+            <h2 id="recovery-title">The exam room hit an unexpected error.</h2>
+            <p className="setup-caption">
+              Saved exam data from an older version can cause this. Reset the saved data to continue —
+              the question bank and your other tabs are unaffected.
+            </p>
+            <button className="primary-button start-button" type="button" onClick={this.resetSavedData}>
+              <span>Reset saved data &amp; reload</span>
+            </button>
+          </section>
+        </main>
+      </div>
     );
   }
-  return <h1 id="question-heading">{text}</h1>;
 }
 
 function BrandMark() {
@@ -141,9 +271,9 @@ function Icon({ name, size = 16 }) {
   return null;
 }
 
-function TopBar({ right, compact = false }) {
+function TopBar({ right, compact = false, inert = false }) {
   return (
-    <header className={`topbar ${compact ? 'topbar-compact' : ''}`}>
+    <header className={`topbar ${compact ? 'topbar-compact' : ''}`} inert={inert ? true : undefined}>
       <div className="brand-lockup">
         <BrandMark />
         <span className="brand-name">CSA <b>/</b> EXAM ROOM</span>
@@ -171,14 +301,28 @@ function Toggle({ checked, onChange, label, sublabel }) {
   );
 }
 
-function HomeScreen({ settings, setSettings, onStart, savedSession, lastResult, onResume, onShowResult }) {
+function Notices({ notice }) {
+  return notice || null;
+}
+
+function HomeScreen({
+  settings,
+  setSettings,
+  onStart,
+  savedSession,
+  lastResult,
+  onResume,
+  onShowResult,
+  notice,
+}) {
   const selectedLength = LENGTHS[settings.length];
   const set = (patch) => setSettings((current) => ({ ...current, ...patch }));
 
   return (
     <div className="page-shell home-page">
+      <Notices notice={notice} />
       <TopBar right={<span className="topbar-note"><span className="status-dot" /> PRACTICE ENVIRONMENT</span>} />
-      <main className="home-main">
+      <main className="home-main" id="main-content" tabIndex={-1}>
         <section className="home-intro">
           <div className="eyebrow"><span>01</span> CERTIFIED SOC ANALYST <b>/</b> PRACTICE SYSTEM</div>
           <h1>Think clearly.<br /><em>Respond decisively.</em></h1>
@@ -188,8 +332,8 @@ function HomeScreen({ settings, setSettings, onStart, savedSession, lastResult, 
           </p>
 
           <div className="home-stats" aria-label="Question bank facts">
-            <div><strong>80</strong><span>QUESTIONS</span></div>
-            <div><strong>04</strong><span>OPTIONS EACH</span></div>
+            <div><strong>{questionBank.length}</strong><span>QUESTIONS</span></div>
+            <div><strong>{String(OPTION_COUNT).padStart(2, '0')}</strong><span>OPTIONS EACH</span></div>
             <div><strong>01</strong><span>RESULT REPORT</span></div>
           </div>
 
@@ -248,9 +392,15 @@ function HomeScreen({ settings, setSettings, onStart, savedSession, lastResult, 
             />
             <Toggle
               checked={settings.shuffle}
-              onChange={(shuffle) => set({ shuffle })}
+              onChange={(shuffleQuestions) => set({ shuffle: shuffleQuestions })}
               label="Shuffle questions"
               sublabel={settings.shuffle ? 'Question order will be mixed' : 'Keep the source order'}
+            />
+            <Toggle
+              checked={settings.shuffleAnswers}
+              onChange={(shuffleAnswers) => set({ shuffleAnswers })}
+              label="Shuffle answers"
+              sublabel={settings.shuffleAnswers ? 'Option order changes each session' : 'Keep the source option order'}
             />
           </div>
 
@@ -313,7 +463,7 @@ function QuestionNavigator({ session, currentIndex, onJump }) {
               type="button"
               key={id}
               onClick={() => onJump(index)}
-              aria-label={`Go to question ${id}${answered ? ', answered' : ', unanswered'}${flagged ? ', marked for review' : ''}`}
+              aria-label={`Go to question ${index + 1} of ${order.length}${answered ? ', answered' : ', unanswered'}${flagged ? ', marked for review' : ''}`}
               aria-current={current ? 'step' : undefined}
             >
               {String(id).padStart(2, '0')}
@@ -332,18 +482,82 @@ function QuestionNavigator({ session, currentIndex, onJump }) {
   );
 }
 
-function ConfirmSubmit({ unanswered, onContinue, onConfirm }) {
+function ConfirmSubmit({ unanswered, flagged, onJumpToUnanswered, onContinue, onConfirm }) {
+  const dialogRef = useRef(null);
+  const restoreRef = useRef(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    restoreRef.current = document.activeElement;
+    const focusable = () => Array.from(
+      dialog?.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [],
+    ).filter((element) => !element.disabled);
+    const list = focusable();
+    (list[0] ?? dialog)?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onContinue();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialog?.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialog?.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.body.style.overflow = previousOverflow;
+      const previous = restoreRef.current;
+      if (previous instanceof HTMLElement && document.contains(previous)) {
+        previous.focus({ preventScroll: true });
+      }
+    };
+  }, [onContinue]);
+
+  const summary = [];
+  if (unanswered > 0) {
+    summary.push(`There ${unanswered === 1 ? 'is' : 'are'} ${unanswered} unanswered ${unanswered === 1 ? 'question' : 'questions'}. They will be counted as incorrect.`);
+  } else {
+    summary.push('You have answered every question. Your results will be calculated as soon as you submit.');
+  }
+  if (flagged > 0) {
+    summary.push(`${flagged} ${flagged === 1 ? 'question is' : 'questions are'} marked for review.`);
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onContinue(); }}>
-      <section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <section
+        className="confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-desc"
+        ref={dialogRef}
+        tabIndex={-1}
+      >
         <div className="modal-kicker">SUBMIT EXAMINATION</div>
         <h2 id="confirm-title">Ready to hand it in?</h2>
-        <p>
-          {unanswered > 0
-            ? `There ${unanswered === 1 ? 'is' : 'are'} ${unanswered} unanswered ${unanswered === 1 ? 'question' : 'questions'}. They will be counted as incorrect.`
-            : 'You have answered every question. Your results will be calculated as soon as you submit.'}
-        </p>
+        <p id="confirm-desc">{summary.join(' ')}</p>
         <div className="modal-actions">
+          {unanswered > 0 && (
+            <button className="secondary-button" type="button" onClick={onJumpToUnanswered}>
+              Jump to first unanswered
+            </button>
+          )}
           <button className="secondary-button" type="button" onClick={onContinue}>Keep working</button>
           <button className="primary-button" type="button" onClick={onConfirm}>Submit exam <Icon name="arrow-right" size={16} /></button>
         </div>
@@ -352,28 +566,84 @@ function ConfirmSubmit({ unanswered, onContinue, onConfirm }) {
   );
 }
 
-function ExamScreen({ session, setSession, onFinish }) {
+function QuestionBody({ question, headingRef }) {
+  const ask = question.ask || question.prompt;
+  if (!question.scenario) {
+    return <h1 id="question-heading" tabIndex={-1} ref={headingRef}>{ask}</h1>;
+  }
+  return (
+    <>
+      <p className="question-scenario">{question.scenario}</p>
+      <h1 id="question-heading" className="question-ask" tabIndex={-1} ref={headingRef}>{ask}</h1>
+    </>
+  );
+}
+
+function ExamScreen({ session, setSession, onFinish, notice }) {
   const [currentIndex, setCurrentIndex] = useState(session.currentIndex || 0);
   const [showMap, setShowMap] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState(session.deadline ? Math.max(0, Math.ceil((session.deadline - Date.now()) / 1000)) : null);
+  const [announcement, setAnnouncement] = useState('');
+  const [timeRemaining, setTimeRemaining] = useState(
+    session.deadline ? Math.max(0, Math.ceil((session.deadline - Date.now()) / 1000)) : null,
+  );
+  const headingRef = useRef(null);
+  const optionRefs = useRef([]);
+  const displayedRef = useRef([]);
+  const warnedRef = useRef(new Set());
+  const openerRef = useRef(null);
+
   const questionId = session.order[currentIndex];
   const question = questionById.get(questionId);
+  const optionOrder = session.optionOrder?.[questionId];
+  const displayed = useMemo(() => displayOptions(question, optionOrder), [question, optionOrder]);
+  displayedRef.current = displayed;
+
   const answeredCount = session.order.filter((id) => session.responses[id] !== undefined).length;
   const progress = Math.round((answeredCount / session.order.length) * 100);
   const isLast = currentIndex === session.order.length - 1;
-  const selected = session.responses[questionId] ?? null;
+  const selected = question ? (session.responses[questionId] ?? null) : null;
   const flagged = Boolean(session.flagged?.[questionId]);
+  const flaggedCount = session.order.filter((id) => session.flagged?.[id]).length;
+
+  const closeConfirm = useCallback(() => {
+    setConfirmOpen(false);
+    const opener = openerRef.current;
+    if (opener) {
+      window.requestAnimationFrame(() => {
+        if (document.contains(opener)) opener.focus({ preventScroll: true });
+      });
+    }
+  }, []);
+
+  const openConfirm = useCallback(() => {
+    // Capture the opener before the background becomes inert (which can blur it).
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setConfirmOpen(true);
+  }, []);
 
   useEffect(() => {
-    setSession((current) => current ? { ...current, currentIndex } : current);
+    setSession((current) => (current ? { ...current, currentIndex } : current));
   }, [currentIndex, setSession]);
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, [currentIndex]);
 
   useEffect(() => {
     if (!session.deadline) return undefined;
     const tick = () => {
       const left = Math.max(0, Math.ceil((session.deadline - Date.now()) / 1000));
       setTimeRemaining(left);
+      if (left <= 300 && !warnedRef.current.has(300)) {
+        warnedRef.current.add(300);
+        const minutes = Math.max(1, Math.ceil(left / 60));
+        setAnnouncement(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'} remaining.`);
+      }
+      if (left <= 60 && !warnedRef.current.has(60)) {
+        warnedRef.current.add(60);
+        setAnnouncement('1 minute remaining.');
+      }
       if (left === 0) onFinish();
     };
     tick();
@@ -381,31 +651,57 @@ function ExamScreen({ session, setSession, onFinish }) {
     return () => window.clearInterval(timer);
   }, [session.deadline, onFinish]);
 
-  const selectAnswer = useCallback((answer) => {
-    setSession((current) => ({
+  const selectAnswer = useCallback((optionId) => {
+    setSession((current) => (current ? {
       ...current,
-      responses: { ...current.responses, [questionId]: answer },
-    }));
-  }, [questionId, setSession]);
+      responses: { ...current.responses, [questionId]: optionId },
+    } : current));
+    const letter = letterForOption(question, optionOrder, optionId);
+    setAnnouncement(`Question ${currentIndex + 1}: answer ${letter ?? optionId} saved.`);
+  }, [questionId, currentIndex, question, optionOrder, setSession]);
 
-  const jump = (index) => {
+  const jump = useCallback((index) => {
     setCurrentIndex(Math.min(session.order.length - 1, Math.max(0, index)));
     setShowMap(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, [session.order.length]);
 
-  const toggleFlag = () => {
-    setSession((current) => ({
+  const toggleFlag = useCallback(() => {
+    setSession((current) => (current ? {
       ...current,
       flagged: { ...current.flagged, [questionId]: !current.flagged?.[questionId] },
-    }));
+    } : current));
+    setAnnouncement(flagged ? 'Review mark removed.' : 'Question marked for review.');
+  }, [flagged, questionId, setSession]);
+
+  const onOptionsKeyDown = (event) => {
+    const keys = ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(event.key) || displayed.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentPosition = displayed.findIndex((entry) => entry.option.id === selected);
+    let next;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = displayed.length - 1;
+    else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      next = currentPosition === -1 ? 0 : (currentPosition + 1) % displayed.length;
+    } else {
+      next = currentPosition === -1 ? displayed.length - 1 : (currentPosition - 1 + displayed.length) % displayed.length;
+    }
+    const target = displayed[next];
+    if (!target) return;
+    selectAnswer(target.option.id);
+    optionRefs.current[next]?.focus();
   };
 
   useEffect(() => {
     const onKeyDown = (event) => {
       if (confirmOpen) return;
       const target = event.target;
-      if (target instanceof HTMLElement && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return;
+      if (target instanceof HTMLElement) {
+        if (target.closest('[role="radio"]') || target.closest('[role="dialog"]')) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
+      }
       if (event.key === 'ArrowRight') {
         event.preventDefault();
         setCurrentIndex((index) => Math.min(session.order.length - 1, index + 1));
@@ -413,38 +709,80 @@ function ExamScreen({ session, setSession, onFinish }) {
         event.preventDefault();
         setCurrentIndex((index) => Math.max(0, index - 1));
       } else if (['1', '2', '3', '4'].includes(event.key)) {
-        const answer = ['A', 'B', 'C', 'D'][Number(event.key) - 1];
-        selectAnswer(answer);
+        const target = displayedRef.current[Number(event.key) - 1];
+        if (target) selectAnswer(target.option.id);
       } else if (event.key.toLowerCase() === 'm') {
         toggleFlag();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [confirmOpen, session.order.length, selectAnswer, questionId]);
+  }, [confirmOpen, session.order.length, selectAnswer, toggleFlag]);
 
   const remainingCount = session.order.length - answeredCount;
   const timerUrgent = timeRemaining !== null && timeRemaining <= 300;
+  const activeOptionId = selected ?? displayed[0]?.option.id ?? null;
+
+  if (!question) {
+    return (
+      <div className="page-shell exam-page">
+        <Notices notice={notice} />
+        <TopBar compact />
+        <main className="exam-layout" id="main-content" tabIndex={-1}>
+          <section className="question-stage">
+            <div className="app-notice app-notice-warn" role="status">
+              <span className="app-notice-text">Question {questionId} is no longer available in the question bank.</span>
+            </div>
+            <button className="primary-button" type="button" onClick={onFinish}>End this session</button>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="page-shell exam-page">
+      <Notices notice={notice} />
       <TopBar
         compact
+        inert={confirmOpen}
         right={(
           <div className="exam-topbar-meta">
             <span className="topbar-progress-copy">{answeredCount} <b>/</b> {session.order.length} ANSWERED</span>
             {session.deadline && (
-              <span className={`timer-chip ${timerUrgent ? 'timer-urgent' : ''}`} aria-label={`${formatTime(timeRemaining ?? 0)} remaining`}>
+              <span
+                className={`timer-chip ${timerUrgent ? 'timer-urgent' : ''}`}
+                role="timer"
+                aria-label={`${formatTime(timeRemaining ?? 0)} remaining`}
+              >
                 <Icon name="clock" size={15} /> <strong>{formatTime(timeRemaining ?? 0)}</strong>
               </span>
             )}
-            <button className="text-action submit-top" type="button" onClick={() => setConfirmOpen(true)}>Review & submit</button>
+            <button
+              className="text-action submit-top"
+              type="button"
+              onClick={openConfirm}
+              aria-haspopup="dialog"
+            >
+              <span className="submit-label-full">Review &amp; submit</span>
+              <span className="submit-label-short">Submit</span>
+            </button>
           </div>
         )}
       />
-      <div className="exam-progress-track" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div>
+      <div
+        className="exam-progress-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+        aria-label={`${progress}% of questions answered`}
+        inert={confirmOpen ? true : undefined}
+      >
+        <span style={{ width: `${progress}%` }} />
+      </div>
 
-      <main className="exam-layout">
+      <main className="exam-layout" id="main-content" tabIndex={-1} inert={confirmOpen ? true : undefined}>
         <div className={`mobile-map-wrap ${showMap ? 'is-open' : ''}`}>
           <button type="button" className="mobile-map-toggle" onClick={() => setShowMap((value) => !value)} aria-expanded={showMap}>
             <span>Question map</span><strong>{answeredCount}/{session.order.length} answered</strong><span className="map-toggle-icon">{showMap ? '−' : '+'}</span>
@@ -469,9 +807,14 @@ function ExamScreen({ session, setSession, onFinish }) {
 
           <div className="question-content" key={question.id}>
             <div className="answer-instruction">SELECT ONE ANSWER</div>
-            <PromptText text={question.prompt} />
-            <div className="options-list" role="radiogroup" aria-label={`Answer choices for question ${question.id}`}>
-              {question.options.map((option) => {
+            <QuestionBody question={question} headingRef={headingRef} />
+            <div
+              className="options-list"
+              role="radiogroup"
+              aria-label={`Answer choices for question ${currentIndex + 1}`}
+              onKeyDown={onOptionsKeyDown}
+            >
+              {displayed.map(({ letter, option }, index) => {
                 const active = selected === option.id;
                 return (
                   <button
@@ -481,8 +824,10 @@ function ExamScreen({ session, setSession, onFinish }) {
                     aria-checked={active}
                     className={`answer-option ${active ? 'is-selected' : ''}`}
                     onClick={() => selectAnswer(option.id)}
+                    tabIndex={option.id === activeOptionId ? 0 : -1}
+                    ref={(element) => { optionRefs.current[index] = element; }}
                   >
-                    <span className="option-letter">{option.id}</span>
+                    <span className="option-letter">{letter}</span>
                     <span className="option-text">{option.text}</span>
                     <span className="option-indicator" aria-hidden="true">{active ? <Icon name="check" size={15} /> : ''}</span>
                   </button>
@@ -500,8 +845,8 @@ function ExamScreen({ session, setSession, onFinish }) {
               {flagged && <span className="footer-flag">· Marked for review</span>}
             </div>
             {isLast ? (
-              <button className="primary-button next-button" type="button" onClick={() => setConfirmOpen(true)}>
-                Review & submit <Icon name="arrow-right" size={16} />
+              <button className="primary-button next-button" type="button" onClick={openConfirm}>
+                Review &amp; submit <Icon name="arrow-right" size={16} />
               </button>
             ) : (
               <button className="primary-button next-button" type="button" onClick={() => jump(currentIndex + 1)}>
@@ -516,21 +861,41 @@ function ExamScreen({ session, setSession, onFinish }) {
         </section>
       </main>
 
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
+
       {confirmOpen && (
         <ConfirmSubmit
           unanswered={remainingCount}
-          onContinue={() => setConfirmOpen(false)}
-          onConfirm={() => { setConfirmOpen(false); onFinish(); }}
+          flagged={flaggedCount}
+          onJumpToUnanswered={() => {
+            setConfirmOpen(false);
+            jump(firstUnansweredIndex(session));
+          }}
+          onContinue={closeConfirm}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            onFinish();
+          }}
         />
       )}
     </div>
   );
 }
 
-function ReviewItem({ entry, index }) {
+function ReviewItem({ entry }) {
   const question = questionById.get(entry.id);
-  const selectedOption = question.options.find((option) => option.id === entry.selected);
-  const correctOption = question.options.find((option) => option.id === entry.correct);
+  if (!question) {
+    return (
+      <div className="review-item">
+        <div className="review-detail">
+          <p className="review-prompt">Question {entry.id} is no longer available in the question bank.</p>
+        </div>
+      </div>
+    );
+  }
+  const displayed = displayOptions(question, entry.options);
+  const selectedEntry = displayed.find((item) => item.option.id === entry.selected) ?? null;
+  const correctEntry = displayed.find((item) => item.option.id === entry.correct) ?? null;
   const statusLabel = entry.outcome === 'correct' ? 'Correct' : entry.outcome === 'unanswered' ? 'Not answered' : 'Incorrect';
 
   return (
@@ -545,21 +910,21 @@ function ReviewItem({ entry, index }) {
         <p className="review-prompt">{question.prompt}</p>
         <div className="review-answer-grid">
           <div className={`review-answer-box ${entry.outcome === 'correct' ? 'answer-good' : 'answer-bad'}`}>
-            <span>{entry.selected ? 'YOUR ANSWER' : 'YOUR ANSWER'}</span>
-            <strong>{entry.selected ? `${entry.selected}. ${selectedOption?.text ?? ''}` : 'Not answered'}</strong>
+            <span>YOUR ANSWER</span>
+            <strong>{selectedEntry ? `${selectedEntry.letter}. ${selectedEntry.option.text}` : 'Not answered'}</strong>
           </div>
           <div className="review-answer-box answer-good">
             <span>ANSWER KEY</span>
-            <strong>{entry.correct}. {correctOption?.text ?? ''}</strong>
+            <strong>{correctEntry ? `${correctEntry.letter}. ${correctEntry.option.text}` : entry.correct}</strong>
           </div>
         </div>
         <div className="review-options">
-          {question.options.map((option) => {
+          {displayed.map(({ letter, option }) => {
             const isChosen = entry.selected === option.id;
             const isCorrect = entry.correct === option.id;
             return (
               <div className={`review-option ${isCorrect ? 'is-correct' : ''} ${isChosen && !isCorrect ? 'is-wrong' : ''}`} key={option.id}>
-                <span>{option.id}</span><p>{option.text}</p>
+                <span>{letter}</span><p>{option.text}</p>
                 {isCorrect && <b>KEY</b>}
                 {isChosen && !isCorrect && <b>YOUR PICK</b>}
               </div>
@@ -581,12 +946,17 @@ function ReviewItem({ entry, index }) {
   );
 }
 
-function ResultsScreen({ result, onRetry, onHome }) {
+function ResultsScreen({ result, onRetry, onHome, notice }) {
   const [filter, setFilter] = useState('missed');
+  const headingRef = useRef(null);
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const missedEntries = result.entries.filter((entry) => entry.outcome !== 'correct');
   const unansweredEntries = result.entries.filter((entry) => entry.outcome === 'unanswered');
   const flaggedEntries = result.entries.filter((entry) => entry.flagged);
-  const sourceNotes = result.entries.filter((entry) => questionById.get(entry.id).sourceNote);
+  const sourceNotes = result.entries.filter((entry) => questionById.get(entry.id)?.sourceNote);
   const entries = filter === 'all'
     ? result.entries
     : filter === 'unanswered'
@@ -597,14 +967,23 @@ function ResultsScreen({ result, onRetry, onHome }) {
           ? sourceNotes
           : missedEntries;
 
+  const filters = [
+    { id: 'missed', label: 'Missed', count: missedEntries.length },
+    { id: 'unanswered', label: 'Unanswered', count: unansweredEntries.length },
+    { id: 'flagged', label: 'Marked', count: flaggedEntries.length },
+    { id: 'all', label: 'All', count: result.total },
+    { id: 'source', label: 'Source notes', count: sourceNotes.length },
+  ];
+
   return (
     <div className="page-shell results-page">
+      <Notices notice={notice} />
       <TopBar right={<span className="topbar-note"><span className="status-dot status-dot-done" /> SESSION COMPLETE</span>} />
-      <main className="results-main">
+      <main className="results-main" id="main-content" tabIndex={-1}>
         <div className="results-eyebrow"><span>RESULT REPORT</span><b>/</b><span>{new Date(result.completedAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}</span></div>
         <section className="results-hero">
           <div className="results-title-block">
-            <h1>Session<br /><em>complete.</em></h1>
+            <h1 ref={headingRef} tabIndex={-1}>Session<br /><em>complete.</em></h1>
             <p>You got <strong>{result.correct} out of {result.total}</strong> questions right. Take a look at the misses and use them to focus your next round.</p>
             <div className="results-actions">
               <button className="primary-button" type="button" onClick={onRetry}><Icon name="restart" size={16} /> Run another session</button>
@@ -644,12 +1023,18 @@ function ResultsScreen({ result, onRetry, onHome }) {
           )}
 
           <div className="review-controls">
-            <div className="review-tabs" role="tablist" aria-label="Filter review questions">
-              <button type="button" role="tab" aria-selected={filter === 'missed'} className={filter === 'missed' ? 'active' : ''} onClick={() => setFilter('missed')}>Missed <b>{missedEntries.length}</b></button>
-              <button type="button" role="tab" aria-selected={filter === 'unanswered'} className={filter === 'unanswered' ? 'active' : ''} onClick={() => setFilter('unanswered')}>Unanswered <b>{unansweredEntries.length}</b></button>
-              <button type="button" role="tab" aria-selected={filter === 'flagged'} className={filter === 'flagged' ? 'active' : ''} onClick={() => setFilter('flagged')}>Marked <b>{flaggedEntries.length}</b></button>
-              <button type="button" role="tab" aria-selected={filter === 'all'} className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All <b>{result.total}</b></button>
-              <button type="button" role="tab" aria-selected={filter === 'source'} className={filter === 'source' ? 'active' : ''} onClick={() => setFilter('source')}>Source notes <b>{sourceNotes.length}</b></button>
+            <div className="review-tabs" role="group" aria-label="Filter review questions">
+              {filters.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={filter === item.id}
+                  className={filter === item.id ? 'active' : ''}
+                  onClick={() => setFilter(item.id)}
+                >
+                  {item.label} <b>{item.count}</b>
+                </button>
+              ))}
             </div>
             <span className="review-control-note">SELECT A QUESTION TO EXPAND</span>
           </div>
@@ -662,7 +1047,7 @@ function ResultsScreen({ result, onRetry, onHome }) {
             </div>
           ) : (
             <div className="review-list">
-              {entries.map((entry, index) => <ReviewItem key={entry.id} entry={entry} index={index} />)}
+              {entries.map((entry) => <ReviewItem key={entry.id} entry={entry} />)}
             </div>
           )}
         </section>
@@ -675,34 +1060,68 @@ function ResultsScreen({ result, onRetry, onHome }) {
   );
 }
 
-export default function App() {
-  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...(readStorage(SETTINGS_KEY) || {}) }));
-  const [session, setSession] = useState(() => readStorage(SESSION_KEY));
-  const [result, setResult] = useState(() => readStorage(RESULT_KEY));
+function ExamApp() {
+  const [boot] = useState(loadBoot);
+  const [settings, setSettings] = useState(boot.settings);
+  const [session, setSession] = useState(boot.session);
+  const [result, setResult] = useState(boot.result);
   const [view, setView] = useState('home');
+  const [storageOk, setStorageOk] = useState(!boot.unavailable);
+  const [discarded, setDiscarded] = useState(boot.discarded);
+  const [externalChange, setExternalChange] = useState(false);
   const sessionRef = useRef(session);
   const submittedRef = useRef(false);
 
+  const persist = useCallback((key, value) => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+      setStorageOk(true);
+      return true;
+    } catch {
+      setStorageOk(false);
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     sessionRef.current = session;
-    if (session) writeStorage(SESSION_KEY, session);
-  }, [session]);
+    if (session) persist(SESSION_KEY, session);
+  }, [session, persist]);
 
   useEffect(() => {
-    writeStorage(SETTINGS_KEY, settings);
-  }, [settings]);
+    persist(SETTINGS_KEY, settings);
+  }, [settings, persist]);
+
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key === SESSION_KEY || event.key === RESULT_KEY) setExternalChange(true);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const startExam = () => {
-    const config = LENGTHS[settings.length];
+    const config = LENGTHS[settings.length] ?? LENGTHS.full;
     let order = questionBank.map((question) => question.id);
     if (settings.length !== 'full') {
-      order = shuffleArray(order).slice(0, config.count).sort((a, b) => a - b);
+      order = shuffle(order).slice(0, config.count).sort((a, b) => a - b);
     }
-    if (settings.shuffle) order = shuffleArray(order);
+    if (settings.shuffle) order = shuffle(order);
+
+    const optionOrder = {};
+    for (const id of order) {
+      const question = questionById.get(id);
+      if (!question) continue;
+      // Items carrying a source-note reference option letters from the PDF, so
+      // they keep the source order and those notes stay accurate.
+      optionOrder[id] = buildOptionOrder(question, settings.shuffleAnswers && !question.sourceNote);
+    }
+
     const nextSession = {
       order,
       responses: {},
       flagged: {},
+      optionOrder,
       currentIndex: 0,
       startedAt: Date.now(),
       deadline: settings.timed ? Date.now() + config.duration * 60 * 1000 : null,
@@ -711,7 +1130,6 @@ export default function App() {
     submittedRef.current = false;
     sessionRef.current = nextSession;
     setSession(nextSession);
-    writeStorage(SESSION_KEY, nextSession);
     setView('exam');
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -729,20 +1147,46 @@ export default function App() {
     submittedRef.current = true;
     const finalResult = buildResult(latest);
     setResult(finalResult);
-    writeStorage(RESULT_KEY, finalResult);
-    localStorage.removeItem(SESSION_KEY);
+    persist(RESULT_KEY, finalResult);
+    try {
+      window.localStorage.removeItem(SESSION_KEY);
+    } catch {
+      setStorageOk(false);
+    }
     sessionRef.current = null;
     setSession(null);
     setView('results');
     window.scrollTo({ top: 0, behavior: 'instant' });
-  }, []);
+  }, [persist]);
 
-  const showPreviousResult = () => {
-    if (result) setView('results');
-  };
+  const notice = (
+    <>
+      {!storageOk && (
+        <div className="app-notice app-notice-warn" role="status">
+          <span className="app-notice-text">
+            Progress can’t be saved — this browser is blocking local storage or it is full.
+            Keep this tab open, or your answers will be lost.
+          </span>
+        </div>
+      )}
+      {discarded && (
+        <div className="app-notice app-notice-info" role="status">
+          <span className="app-notice-text">Saved exam data from an older version was cleared because it could not be read.</span>
+          <button className="app-notice-action" type="button" onClick={() => setDiscarded(false)}>Dismiss</button>
+        </div>
+      )}
+      {externalChange && (
+        <div className="app-notice app-notice-info" role="status">
+          <span className="app-notice-text">This exam was changed in another tab. Reload to pick up the latest state.</span>
+          <button className="app-notice-action" type="button" onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       {view === 'home' && (
         <HomeScreen
           settings={settings}
@@ -751,7 +1195,8 @@ export default function App() {
           savedSession={session}
           lastResult={result}
           onResume={resumeExam}
-          onShowResult={showPreviousResult}
+          onShowResult={() => { if (result) setView('results'); }}
+          notice={notice}
         />
       )}
       {view === 'exam' && session && (
@@ -759,15 +1204,25 @@ export default function App() {
           session={session}
           setSession={setSession}
           onFinish={finishExam}
+          notice={notice}
         />
       )}
       {view === 'results' && result && (
         <ResultsScreen
           result={result}
-          onRetry={() => { setView('home'); startExam(); }}
+          onRetry={startExam}
           onHome={() => setView('home')}
+          notice={notice}
         />
       )}
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <ExamApp />
+    </ErrorBoundary>
   );
 }
