@@ -1515,7 +1515,7 @@
   },
   {
     "id": 59,
-    "prompt": "A security operations team at a large enterprise is enhancing their SIEM’s network visibility capabilities. Their goal is to collect detailed network flow data from core routers and firewalls to detect suspicious communication patterns and lateral movement within the corporate network. The solution must: Provide metadata about IP conversations including source/destination IPs, ports, and protocol types Work efficiently at high network speeds with minimal impact on device performance Support aggregation of flow records from multiple devices to feed the SIEM for correlation and alerting Enable near real-time visibility into network traffic volumes and anomalies without full packet capture After reviewing various network telemetry protocols, which protocol is best suited to meet these requirements?",
+    "prompt": "A security operations team at a large enterprise is enhancing their SIEM’s network visibility capabilities. Their goal is to collect detailed network flow data from core routers and firewalls to detect suspicious communication patterns and lateral movement within the corporate network. The solution must: Provide metadata about IP conversations including source/destination IPs, ports, and protocol types Work efficiently at high network speeds with minimal impact on device performance Support aggregation of flow records from multiple devices to feed the SIEM for correlation and alerting Enable near real-time visibility into network traffic volumes and anomalies without full packet capture Use an IETF standards-track flow-export specification rather than a vendor-proprietary format After reviewing various network telemetry protocols, which protocol is best suited to meet these requirements?",
     "options": [
       {
         "id": "A",
@@ -1534,12 +1534,12 @@
         "text": "SNMP"
       }
     ],
-    "answer": "B",
+    "answer": "A",
     "explanation": "",
-    "scenario": "A security operations team at a large enterprise is enhancing their SIEM’s network visibility capabilities. Their goal is to collect detailed network flow data from core routers and firewalls to detect suspicious communication patterns and lateral movement within the corporate network. The solution must: Provide metadata about IP conversations including source/destination IPs, ports, and protocol types Work efficiently at high network speeds with minimal impact on device performance Support aggregation of flow records from multiple devices to feed the SIEM for correlation and alerting Enable near real-time visibility into network traffic volumes and anomalies without full packet capture After reviewing various network telemetry protocols,",
+    "scenario": "A security operations team at a large enterprise is enhancing their SIEM’s network visibility capabilities. Their goal is to collect detailed network flow data from core routers and firewalls to detect suspicious communication patterns and lateral movement within the corporate network. The solution must: Provide metadata about IP conversations including source/destination IPs, ports, and protocol types Work efficiently at high network speeds with minimal impact on device performance Support aggregation of flow records from multiple devices to feed the SIEM for correlation and alerting Enable near real-time visibility into network traffic volumes and anomalies without full packet capture Use an IETF standards-track flow-export specification rather than a vendor-proprietary format After reviewing various network telemetry protocols,",
     "ask": "Which protocol is best suited to meet these requirements?",
-    "answerStatus": "ambiguous",
-    "sourceNote": "IPFIX (A) is the IETF-standard successor to NetFlow and satisfies the same requirements; the stem gives no differentiator between them. Key B is retained."
+    "answerStatus": "corrected",
+    "sourceNote": "The original stem gave no way to choose between NetFlow (B) and its IETF-standard successor, IPFIX (A). The requirement list now asks for an IETF standards-track flow-export specification rather than a vendor-proprietary format, which makes IPFIX the only correct answer. The source PDF keyed NetFlow; the simulator scores A."
   },
   {
     "id": 60,

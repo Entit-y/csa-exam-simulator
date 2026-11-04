@@ -4,7 +4,7 @@ Source audited: `C:\Users\hi\Downloads\CSA_prep_updated.pdf` (42 pages, compiled
 App audited: `src/data/questions.json` (80 questions) as deployed.
 Date: 2026-11-04.
 
-> **Status: fixes applied and reviewed.** Round 1: Q16 → C, Q69 → C, option repairs (Q20/Q61/Q80), Q39 stem corrected, ambiguity notes added. Round 2 (after discussion): Q31 → C, Q38 → D, Q63 → D, Q60 option C restored to "DNS Spoofing" (key stays D), Q59 kept at B with a note. See the README for the shipped state and the follow-up section at the end.
+> **Status: fixes applied and reviewed.** Round 1: Q16 → C, Q69 → C, option repairs (Q20/Q61/Q80), Q39 stem corrected, ambiguity notes added. Round 2 (after discussion): Q31 → C, Q38 → D, Q63 → D, Q60 option C restored to "DNS Spoofing" (key stays D). Round 3: Q59's stem gained the missing differentiator and now scores A (IPFIX). See the README for the shipped state and the follow-up section at the end.
 
 ## TL;DR
 
@@ -106,6 +106,6 @@ The five ambiguous items were reviewed with the user, item by item. This superse
 |---|---|---|---|
 | Q31 | retain B (Event) | **scored C (Alert)** | The SIEM flags the activity and a ticket is opened — rule-matched activity under triage is an alert. It is not an incident. |
 | Q38 | retain A (Setup) | **scored D (System)** | Enabling RDP is a service state change recorded by SCM in the System log; Setup records role/feature installation. The stem explicitly says "enabling services". |
-| Q59 | retain B (NetFlow) | **retained B**, with note | The stem gives no differentiator; IPFIX is the IETF standard and satisfies the same requirements, so the item remains annotated. |
+| Q59 | retain B (NetFlow) | **scored A (IPFIX)**, stem repaired | The original stem gave no differentiator. A requirement was added: "Use an IETF standards-track flow-export specification rather than a vendor-proprietary format", which makes IPFIX the only correct answer. |
 | Q60 | retain D, ambiguous | **retained D**; option C restored to **"DNS Spoofing"** | The PDF's own explanation discusses DNS Spoofing (which was not among the options), and the compiled option C "DNS blacklisting" was a near-synonym of the answer. Restoring Spoofing makes exactly one mitigation correct. |
 | Q63 | retain A | **scored D** | Under the standard strategic/operational/tactical/technical taxonomy, the campaign analysis is operational and the TTP/tooling output is tactical. The PDF's own definitions are non-standard. |

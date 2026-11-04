@@ -61,7 +61,7 @@ The supplied key has been verified against the PDF's own answer text and the que
 - **Question 63:** the printed key uses a non-standard taxonomy (tactical = TTPs, operational = tooling). Under the standard strategic/operational/tactical/technical model the mapping is **D**, which the app scores.
 - **Question 69:** the printed key says **4618** ("a monitored security event pattern"), which has nothing to do with time. The app scores **C (4616, "the system time was changed")** and annotates the correction.
 - **Question 77:** the PDF does not print an answer. The app uses **C** as an inference from the scenario and labels it as unverified.
-- **Question 59:** the keyed answer **NetFlow** is retained, with a note explaining that **IPFIX** is the IETF standard and satisfies the same requirements; the stem gives no differentiator.
+- **Question 59:** the original stem gave no way to choose between **NetFlow** and **IPFIX**. The stem now requires an IETF standards-track, vendor-neutral flow-export format, so the app scores **A (IPFIX)**.
 - **Data repairs:** Q20's option D was transcribed from a different question and is corrected; Q60's option C is restored to **DNS Spoofing** (the PDF's own explanation discusses it, but the compiled option list substituted "DNS blacklisting"); Q80's option D duplicated the meaning of the keyed answer and was replaced; Q61's malformed `netstat` option was repaired and its stem aligned.
 
 These notes are surfaced rather than silently normalized. Review them against your instructor's key.

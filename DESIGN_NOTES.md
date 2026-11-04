@@ -29,7 +29,7 @@ The layout is intentionally typographic and task-led: one configuration panel on
 
 ## Source integrity
 
-The question text, options, and supplied answer letters are represented in `src/data/questions.json`. Notes on individual questions use one of four `answerStatus` values, each rendered with its own label in the review: `conflict` (the printed key contradicts its own explanation), `corrected` (a printed answer or option was repaired), `inferred` (the PDF prints no answer), and `ambiguous` (a second option is equally defensible). Current examples: Q16 (conflict), Q31/Q38/Q63/Q69 (corrected), Q77 (inferred), and Q59 (ambiguous).
+The question text, options, and supplied answer letters are represented in `src/data/questions.json`. Notes on individual questions use one of four `answerStatus` values, each rendered with its own label in the review: `conflict` (the printed key contradicts its own explanation), `corrected` (a printed answer or option was repaired), `inferred` (the PDF prints no answer), and `ambiguous` (a second option is equally defensible). Current examples: Q16 (conflict), Q31/Q38/Q59/Q63/Q69 (corrected), and Q77 (inferred). The `ambiguous` value remains available if a future item needs it.
 
 ## References consulted
 
