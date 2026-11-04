@@ -56,10 +56,13 @@ The question text and answer options are transcribed from the supplied PDF. Expl
 The supplied key has been verified against the PDF's own answer text and the question content. Corrections and remaining caveats are surfaced in the results review:
 
 - **Question 16:** the printed key says **D**, but the explanation and the described TTPs (admin shares, stolen domain credentials, scheduled tasks, remote execution) match **C**. The app scores **C** and flags the printed conflict.
+- **Question 31:** the printed key says **Event**, but the stem has the SIEM flagging the activity and a ticket opened for triage — that is an **Alert**. The app scores **C**.
+- **Question 38:** the printed key says **Setup**, but enabling RDP is a service state change recorded in the **System** log; Setup records role/feature installation. The app scores **D**.
+- **Question 63:** the printed key uses a non-standard taxonomy (tactical = TTPs, operational = tooling). Under the standard strategic/operational/tactical/technical model the mapping is **D**, which the app scores.
 - **Question 69:** the printed key says **4618** ("a monitored security event pattern"), which has nothing to do with time. The app scores **C (4616, "the system time was changed")** and annotates the correction.
 - **Question 77:** the PDF does not print an answer. The app uses **C** as an inference from the scenario and labels it as unverified.
-- **Ambiguous items (Q31, Q38, Q59, Q60, Q63):** the keyed answer is retained, but each carries a source note naming the equally defensible alternative.
-- **Data repairs:** Q20's option D was transcribed from a different question and is corrected; Q80's option D duplicated the meaning of the keyed answer and was replaced; Q61's malformed `netstat` option was repaired and its stem aligned.
+- **Question 59:** the keyed answer **NetFlow** is retained, with a note explaining that **IPFIX** is the IETF standard and satisfies the same requirements; the stem gives no differentiator.
+- **Data repairs:** Q20's option D was transcribed from a different question and is corrected; Q60's option C is restored to **DNS Spoofing** (the PDF's own explanation discusses it, but the compiled option list substituted "DNS blacklisting"); Q80's option D duplicated the meaning of the keyed answer and was replaced; Q61's malformed `netstat` option was repaired and its stem aligned.
 
 These notes are surfaced rather than silently normalized. Review them against your instructor's key.
 
