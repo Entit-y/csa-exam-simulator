@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.gh-config/
+.npm-cache/
+.DS_Store
+.vscode/
